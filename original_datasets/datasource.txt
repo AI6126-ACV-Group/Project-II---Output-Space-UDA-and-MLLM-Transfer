@@ -1,0 +1,5 @@
+https://github.com/alijfri99/USPS-JPG/blob/master/USPS%20Dataset%20JPG%20Format.zip  USPS
+https://github.com/teavanist/MNIST-JPG/blob/master/MNIST%20Dataset%20JPG%20format.zip MINST
+https://www.kaggle.com/datasets/nickfratto/pacs-dataset PACS
+https://www.kaggle.com/datasets/african66666/office31 office31
+https://www.kaggle.com/datasets/ziyankhanpathan/officehomedataset officehome
