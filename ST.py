@@ -15,6 +15,10 @@ from torch.utils.data import random_split
 from torch.utils.data import Subset
 
 class Logger(object):
+    """
+    Logger class to log training progress, the result will be saved as
+    train_model_time.log file in --save_dir
+    """
     def __init__(self, filename='default.log', stream=sys.stdout):
         self.terminal = stream
         self.log = open(filename, 'a')
@@ -27,16 +31,15 @@ class Logger(object):
     def flush(self):
         pass
 
-
 class TargetUnlabeledDataset(datasets.ImageFolder):
+    """
+    读取图片并生成dataset：
+    返回: (image_tensor, target_index, image_path)
+    """
     def __init__(self, root, transform=None):
         super(TargetUnlabeledDataset, self).__init__(root, transform)
 
     def __getitem__(self, index):
-        """
-        覆盖父类方法：
-        返回: (图片张量, 原始索引, 图片绝对路径)
-        """
         path, target = self.samples[index]  # target 是 ImageFolder 自动生成的 ID
         sample = self.loader(path)
         if self.transform is not None:
@@ -48,28 +51,62 @@ class PseudoLabeledDataset(Dataset):
     def __init__(self, samples, transform=None):
         self.samples = samples
         self.transform = transform
+        # 必须指定 loader
+        self.loader = datasets.folder.default_loader
 
-    def __len__(self): return len(self.samples)
+    def __len__(self):
+        return len(self.samples)
 
     def __getitem__(self, i):
         path, label = self.samples[i]
-        img = Image.open(path).convert('RGB')
-        if self.transform: img = self.transform(img)
+        try:
+            img = self.loader(path)
+        except Exception as e:
+            print(f"Error loading image {path}: {e}")
+            # 返回一个黑图或者抛出错误
+            raise e
+        if self.transform:
+            img = self.transform(img)
+        # 确保 label 是 Tensor
+        if not isinstance(label, torch.Tensor):
+            label = torch.tensor(label).long()
         return img, label
 
+class SourceDatasetWrapper(Dataset):
+    def __init__(self, dataset, num_classes):
+        self.dataset = dataset
+        self.num_classes = num_classes
+    def __len__(self):
+        return len(self.dataset)
+    def __getitem__(self, i):
+        img, label = self.dataset[i]
+        # 将 int 转换为 one-hot 向量，形状为 [num_classes]
+        one_hot_label = torch.zeros(self.num_classes)
+        one_hot_label[label] = 1.0
+        return img, one_hot_label
 
 def kc_parameters(conf_dict, pred_cls_num, args, round_idx):
+    """
+    生成 ST/CB(R)ST 方法下目标域数据允许进入混合训练集的的置信度阈值
+    :param conf_dict: 置信度字典
+    :param pred_cls_num: 目标标签数量
+    :param args: 传入 argparse
+    :param round_idx: 迭代训练 index
+    :return: cls_thresh (numpy 数组，长度与分类任务label数量一致，用来保存进入训练集的置信度阈值)
+    """
 
     print(f'\n###### Round {round_idx}: Start KC Generation (Method: {args.method}) ######')
     start_time = time.time()
+    # 初始化numpy数组
     cls_thresh = np.ones(args.num_classes, dtype=np.float32)
     cls_sel_size = np.zeros(args.num_classes, dtype=np.float32)
-    # 当前轮次的选取比例 (Curriculum Learning)
+
+    # 当前轮次的选取比例 (Curriculum Learning) 用 args.max_portion 控制目标域数据进入混合训练集的最大上限
     portion = min(args.init_portion + round_idx * args.portion_step, args.max_portion)
 
     if args.method == 'ST':
         # (ST) with self-paced learning
-        '''
+        '''CBST 论文原文：
            A better strategy is to follow an easy-to-hard
            scheme via self-paced curriculum learning, where one seeks to generate pseudo-
            labels from the most confident predictions and hope they are mostly correct.
@@ -102,7 +139,7 @@ def kc_parameters(conf_dict, pred_cls_num, args, round_idx):
         y_hat_{t,n} 属于 {e_1, ..., e_C} (one-hot 向量) 或 {0} (不选)。
         
         k_c 由代码 cls_sel_size[idx_cls] = int(math.floor(len(scores) * portion)) 控制 
-        有点类似于 WCE 的思想，但在无监督任务中该weight被赋给了伪标签的阈值
+        有点类似于 WCE 的思想，但在无监督任务中该weight用于目标域数据进入混合训练集的阈值
         """
         for idx_cls in range(args.num_classes):
             scores = conf_dict[idx_cls]
@@ -115,63 +152,96 @@ def kc_parameters(conf_dict, pred_cls_num, args, round_idx):
 
         print(f"CBST/CRST Thresholds per class: {np.round(cls_thresh, 4)}")
 
-    # (Rare Class Mining)
+    # (Rare Class Mining) 这一部分继承于官方代码的 crst_seg_offical.py
+    # 目前可以显示 top args.rare_cls_num 数量的置信度最低的label 但目前没有设置调整权重的代码，如后续训练出现hard sample, 可以添加调整rare_id cls_thresh 的代码
     cls_ratios = pred_cls_num / (np.sum(pred_cls_num) + 1e-6)
     rare_id = np.argsort(cls_ratios)[:args.rare_cls_num]
+    # TODO: 当出现明显的hard sample时 （Thresholds 过低） 添加对其进行cls_thresh调整代码
+
+    # 权重文件保存
     save_path = os.path.join(args.save_dir, f'round_{round_idx}')
     os.makedirs(save_path, exist_ok=True)
     np.save(os.path.join(save_path, 'cls_thresh.npy'), cls_thresh)
     np.save(os.path.join(save_path, 'rare_id.npy'), rare_id)
-
     print(f'Rarest IDs: {rare_id} | Time: {time.time() - start_time:.2f}s')
     return cls_thresh
 
-def generate_pseudo_data(model, loader, device, args):
+
+def get_model_predictions(model, loader, device, args):
     model.eval()
+    all_probs = []
+    all_paths = []
     conf_dict = {i: [] for i in range(args.num_classes)}
     pred_cls_num = np.zeros(args.num_classes)
-    all_raw_results = []
     with torch.no_grad():
         for imgs, _, paths in loader:
             imgs = imgs.to(device)
             probs = F.softmax(model(imgs), dim=1)
-            # 获取 Top-1 预测
             max_probs, preds = torch.max(probs, dim=1)
-
             for i in range(len(preds)):
                 p_label = preds[i].item()
                 p_score = max_probs[i].item()
                 pred_cls_num[p_label] += 1
-                # 根据 kc_value 决定统计池的内容
                 if args.kc_value == 'conf':
-                    #硬标签，此时conf_dict返回的是 top-1
                     """
                     {
-                     0: [0.92, 0.81, 0.75, ...], # 只有被预测为类别 0 的 Top-1 分数
-                     1: [0.99, 0.88, ...],       # 只有被预测为类别 1 的 Top-1 分数
-                      ...
-                    }
+                    0: [0.9, 0.8...],      # 只有被认作是类0的图，其Top-1分数才在这, 可能小于真实的0类别图数量
+                    1: [0.95...],          # 只有被认作是类1的图...
+                    2: [0.7...],           # 只有被认作是类2的图...
+                    ...
+                    } 字典中所有概率的数量 = 训练集的图片数   
+                    优点: 计算速度快，在类别平衡的数据集上效果会更好，判别性强
+                    缺点: 如果模型对类 A 有偏见（预测数量极少），类 A 的统计池样本量会非常小。由于样本不足，计算出的阈值（Top k%）可能由于极端值的干扰而变得无意义
+                        可能“死锁”,如果某一轮模型完全没有把任何样本预测为类 B，那么类 B 的池子就是空的。在 CBST 中，这会导致该类彻底失去被选中的机会
                     """
                     conf_dict[p_label].append(p_score)
-                elif args.kc_value == 'prob':
-                    # 软标签
+                else:
                     """
                     {
-                    0: [0.92, 0.01, 0.05, ...], # 既包含预测为0的高分，也包含预测为其他类时，分类器给类0的低分
-                    1: [0.03, 0.99, 0.02, ...], 
-                    ...
-                    }
+                    0: [0.1, 0.23...],      # 所有训练图片被识别为1的概率
+                    1: [0.2, 0.75...],      # 所有训练图片被识别为2的概率
+                    2: [0.7, 0.05...],      # 所有训练图片被识别为3的概率
+                    } 字典中所有概率的数量 = 训练集的图片数 * 类别数   即使类 A 预测得少，阈值也会相对平滑，
+                    优点: 无论模型预测如何偏向，每个类都有充足的数据来计算阈值，不会出现“死锁”，对非平衡数据的稀缺类友好，阈值更平滑
+                    缺点: 如果设置的 portion 较大，选出的阈值可能非常低，从而引入大量极其模糊、甚至完全错误的伪标签，让训练彻底崩溃
+                         它的阈值不再代表“我认为它是类 A 的确信度”，而是代表“它在所有图里的类 A 激活排名”，判别性弱
+                         计算压力大，速度慢
                     """
                     for c in range(args.num_classes):
                         conf_dict[c].append(probs[i, c].item())
-                all_raw_results.append({'path': paths[i], 'label': p_label, 'score': p_score})
 
-    return all_raw_results, conf_dict, pred_cls_num
+            all_probs.append(probs.cpu())
+            all_paths.extend(paths)
+
+    return torch.cat(all_probs), all_paths, conf_dict, pred_cls_num
+
+
+def select_sample(all_probs, all_paths, current_thresholds, args):
+    selected_samples = []
+    num_classes = all_probs.size(1)
+    lambdas = torch.from_numpy(current_thresholds).float()
+    for i in range(len(all_probs)):
+        prob = all_probs[i]
+        max_score, hard_label = torch.max(prob, dim=0)
+        # 1. 筛选逻辑：只保留超过当前类阈值的样本
+        if max_score >= current_thresholds[hard_label.item()]:
+            if args.method == 'CRST' and args.alpha > 0:
+                # LRENT label: Tensor [num_classes]
+                # 对应论文LRENT: Y_t_hat = [(p_i / lambda) ^ (1 / alpha)] / sum((p_k / lambda) ^ (1 / alpha))
+                # 1e-6 是为了防止除以 0
+                soft_label = (prob / (lambdas + 1e-6)) ** (1.0 / args.alpha)
+                target_label = soft_label / soft_label.sum()
+            else:
+                # Hard label: 包装成 Tensor 标量，确保 dataset 拿到的是一致的类型
+                target_label = torch.zeros(num_classes)
+                target_label[hard_label.item()] = 1.0
+            selected_samples.append((all_paths[i], target_label))
+    return selected_samples
 
 
 def loss_function(logits, labels, args):
     """
-    - args.alpha: LRENT (Label Regularization) 权重
+    损失函数设置 ST/CBST 使用交叉熵 ; CRST 会额外引入正则项 (论文中的 LRENT,MRKLD,MRENT,MRL2)
     - args.beta:  MRKLD (Model Regularization - KL) 权重
     - args.gamma: MRENT (Model Regularization - Entropy) 权重
     - args.delta: MRL2 (Model Regularization - L2) 权重
@@ -181,27 +251,17 @@ def loss_function(logits, labels, args):
     num_classes = logits.size(1)
 
     # 1. 基础交叉熵损失 (Standard Cross Entropy)
-    ce_loss = F.cross_entropy(logits, labels)
+    ce_loss = -(labels * log_probs).sum(dim=1).mean()
 
     if args.method != 'CRST':
         return  ce_loss
 
-    # --- 正则化项初始化 ---
-    lrent_loss = 0.0
     mrkld_loss = 0.0
     mrent_loss = 0.0
     mrl2_loss = 0.0
 
-    # 2. LRENT (Label Regularization via Entropy)
-    # LRENT (Label Regularization via Entropy):
-    # sum_{k=1}^K [ y_hat_k * log(y_hat_k) ]
-    # 物理意义: 惩罚伪标签的确定性。由于代码中 labels 通常是 one-hot 或平滑分布，
-    # 训练时通过最小化预测分布的负熵（即最大化熵）来缓解过拟合，防止模型过快收敛到错误的硬标签。
-    if args.alpha > 0:
-        lrent_loss = -(probs * torch.log(probs + 1e-6)).sum(dim=1).mean()
-
     # MRKLD (Model Regularization via KL Divergence):
-    # - sum_{k=1}^K [ (1 / K) * log(p(k | x_t)) ]
+    # - sum_{k=1}^K [ (1 / K) * log(p(k | x_t)) ] (其实就是负的对数概率均值)
     # 物理意义: 最小化预测分布 p 与均匀分布 U(1/K) 之间的 KL 散度。
     # 效果: 强制模型预测向均匀分布靠拢，这是 CRST 论文中最推荐的正则化方式，能有效保持类别多样性。
     if args.beta > 0:
@@ -223,13 +283,11 @@ def loss_function(logits, labels, args):
 
     # --- 最终损失加权整合 ---
     total_loss = (ce_loss +
-                  args.alpha * lrent_loss +
                   args.beta * mrkld_loss +
                   args.gamma * mrent_loss +
                   args.delta * mrl2_loss)
 
     return total_loss
-
 
 def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, args, warmup_model_path):
     print(f"==> Starting Warm-up...")
@@ -242,7 +300,7 @@ def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, a
     for epoch in range(args.warmup_epochs):
         # --- 训练阶段 ---
         model.train()
-        t_loss, correct, total = 0, 0, 0
+        t_loss, t_correct, t_total = 0, 0, 0  # 重命名变量以区分
         for imgs, labels in train_loader:
             imgs, labels = imgs.to(device), labels.to(device)
             optimizer_wm.zero_grad()
@@ -251,23 +309,31 @@ def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, a
             loss.backward()
             optimizer_wm.step()
             t_loss += loss.item()
-            correct += (outputs.argmax(1) == labels).sum().item()
-            total += labels.size(0)
+            t_correct += (outputs.argmax(1) == labels).sum().item()
+            t_total += labels.size(0)
 
-        train_acc = 100. * correct / total
+        avg_train_loss = t_loss / len(train_loader)
+        train_acc = 100. * t_correct / t_total
         model.eval()
-        v_loss = 0
+        v_loss, v_correct, v_total = 0, 0, 0
         with torch.no_grad():
             for imgs, labels in src_val_loader:
                 imgs, labels = imgs.to(device), labels.to(device)
                 outputs = model(imgs)
                 v_loss += F.cross_entropy(outputs, labels).item()
+                v_correct += (outputs.argmax(1) == labels).sum().item()
+                v_total += labels.size(0)
 
         avg_val_loss = v_loss / len(src_val_loader)
+        val_acc = 100. * v_correct / v_total
+
         current_lr = optimizer_wm.param_groups[0]['lr']
         scheduler_wm.step()
-        print(
-            f"Epoch [{epoch + 1}] | LR: {current_lr:.6f} | Train Acc: {train_acc:.2f}% | Val Loss: {avg_val_loss:.4f}")
+
+        print(f"Epoch [{epoch + 1}/{args.warmup_epochs}] | LR: {current_lr:.6f} | "
+              f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
+              f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.2f}%")
+        # 早停逻辑
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             counter = 0
@@ -277,6 +343,7 @@ def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, a
             if counter >= patience:
                 print(f"==> Early stopping triggered at epoch {epoch + 1}")
                 break
+
     if best_model_wts is not None:
         model.load_state_dict(best_model_wts)
     model.eval()
@@ -289,8 +356,8 @@ def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, a
             correct_tgt += (preds == labels).sum().item()
     print(f"\n==> Warm-up Complete! Initial Target Acc: {100. * correct_tgt / len(tgt_val_loader.dataset):.2f}%")
     torch.save(model.state_dict(), warmup_model_path)
-    return model
 
+    return model
 
 def main(args):
 
@@ -334,20 +401,22 @@ def main(args):
     ]) if args.apply_aug else transform_eval
 
     full_src_ds = datasets.ImageFolder(args.src_path, transform=transform_train)
-    args.num_classes = len(full_src_ds.classes)
+    full_src_ds = SourceDatasetWrapper(full_src_ds,args.num_classes) #转 tensor
+
+    #args.num_classes = len(full_src_ds.dataset.classes)
     model.fc = nn.Linear(num_ftrs, args.num_classes)
     model.to(device)
 
     # 目标域数据集
     # 用于真实准确率评估 (使用标准 ImageFolder)
     tgt_eval_ds = datasets.ImageFolder(args.tgt_path, transform=transform_eval)
-    tgt_eval_loader = DataLoader(tgt_eval_ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    tgt_eval_loader = DataLoader(tgt_eval_ds, batch_size=args.batch_size, shuffle=False, num_workers=1)
 
     # 用于自训练生成伪标签 (使用自定义类，获取路径)
     tgt_raw_ds = TargetUnlabeledDataset(args.tgt_path, transform=transform_eval)
-    tgt_loader = DataLoader(tgt_raw_ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    tgt_loader = DataLoader(tgt_raw_ds, batch_size=args.batch_size, shuffle=False, num_workers=1)
 
-    assert full_src_ds.classes == tgt_eval_ds.classes, "Domain classes mismatch!"
+    assert full_src_ds.dataset.classes == tgt_eval_ds.classes, "Domain classes mismatch!"
 
     start_round = 0
     best_target_acc = 0.0
@@ -391,19 +460,25 @@ def main(args):
     # --- Self-Training Rounds ---
     current_thresholds = np.zeros(args.num_classes)
     for r in range(start_round, args.num_rounds):
-        # 生成伪标签 (使用 tgt_loader 获取路径)
-        all_raw, conf_dict, pred_cls_num = generate_pseudo_data(model, tgt_loader, device, args)
-        # 更新类阈值 (KC)
-        current_thresholds = kc_parameters(conf_dict, pred_cls_num, args, r)
-        # 筛选样本
-        selected_samples = [(s['path'], s['label']) for s in all_raw if s['score'] >= current_thresholds[s['label']]]
+        
+        raw_probs, paths, conf_dict, pred_num = get_model_predictions(model, tgt_loader, device, args)
+        # 2. 算当前轮次的新阈值
+        current_thresholds = kc_parameters(conf_dict, pred_num, args, r)
+        # 这里不需要 GPU，速度极快
+        selected_samples = select_sample(raw_probs, paths, current_thresholds, args)
+
         print(f"Round {r}: Selected {len(selected_samples)} target samples.")
         # 构建混合数据集进行再训练
         tgt_pseudo_ds = PseudoLabeledDataset(selected_samples, transform=transform_train)
         combined_loader = DataLoader(
             torch.utils.data.ConcatDataset([full_src_ds, tgt_pseudo_ds]),
-            batch_size=args.batch_size, shuffle=True, num_workers=4
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=1,
+            #collate_fn=lambda x: (torch.stack([item[0] for item in x]), # 我就不信转不成tensor了
+            #                      torch.stack([item[1] if isinstance(item[1], torch.Tensor) else torch.tensor(item[1]).long() for item in x]))
         )
+
         optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=args.epochs_per_round * len(combined_loader), eta_min=1e-6
@@ -479,7 +554,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', action='store_true', help='是否从 checkpoint 恢复训练, 默认从文件夹中checkpoint.pth恢复训练')
     # ST模式设置
     parser.add_argument('--method', type=str, default='ST', choices=['ST', 'CBST', 'CRST'])
-    parser.add_argument('--kc_value', type=str, default='conf', choices=['conf', 'prob'],help="kc_value 计算使用硬标签还是软标签")
+    parser.add_argument('--kc_value', type=str, default='conf', choices=['conf', 'prob'],help="kc_value 计算kc时使用top-1(硬) 还是概率分布(软)")
     ## CRST 正则方法设置 (如果训练模式是 ST 或 CBST 下面的参数将不会产生任何效果)
     parser.add_argument('--alpha', type=float, default=0.0, help="LRENT (Label Regularization) 权重")
     parser.add_argument('--beta', type=float, default=0.0, help="MRKLD (Model Regularization - KL) 权重")
@@ -507,4 +582,4 @@ if __name__ == '__main__':
 
     main(args)
 
-    #python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 5 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 5e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
+    #python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
