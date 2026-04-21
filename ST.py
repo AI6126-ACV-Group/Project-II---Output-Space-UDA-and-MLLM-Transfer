@@ -564,7 +564,7 @@ if __name__ == '__main__':
     # 是否从断点继续训练
     parser.add_argument('--resume', action='store_true', help='是否从 checkpoint 恢复训练, 默认从文件夹中checkpoint.pth恢复训练')
     # ST模式设置
-    parser.add_argument('--method', type=str, default='ST', choices=['ST', 'CBST', 'CRST'])
+    parser.add_argument('--method', type=str, default='ST', choices=['ST', 'CBST', 'CRST'], help="自训练模式")
     parser.add_argument('--kc_value', type=str, default='conf', choices=['conf', 'prob'],help="kc_value 计算kc时使用top-1(硬) 还是概率分布(软)")
     ## CRST 正则方法设置 (如果训练模式是 ST 或 CBST 下面的参数将不会产生任何效果)
     parser.add_argument('--alpha', type=float, default=0.0, help="LRENT (Label Regularization) 权重")
@@ -575,19 +575,18 @@ if __name__ == '__main__':
     parser.add_argument('--src_path', type=str, default='./original_datasets/office_31/amazon',  help='源域数据路径')
     parser.add_argument('--tgt_path', type=str, default='./original_datasets/office_31/webcam',  help='目标域数据路径')
     parser.add_argument('--apply_aug', action='store_true', help='是否在训练时应用 RandomCrop 和 Flip')
-    parser.add_argument('--save_dir', type=str, default='./ST_test')
+    parser.add_argument('--save_dir', type=str, default='./ST_test', help='log,npy,模型checkpoint输出位置')
     # ST超参数
-    parser.add_argument('--num_classes', type=int, default=31)
+    parser.add_argument('--num_classes', type=int, default=31, help='分类任务标签数量')
     parser.add_argument('--init_portion', type=float, default=0.2, help='初始选择比例')
     parser.add_argument('--portion_step', type=float, default=0.1, help='每轮增加比例')
-    parser.add_argument('--max_portion', type=float, default=0.9)
-    parser.add_argument('--reg_weight', type=float, default=0.1, help='CRST正则项权重')
-    parser.add_argument('--rare_cls_num', type=int, default=3)
+    parser.add_argument('--max_portion', type=float, default=0.9, help='自训练允许的目标域数据最大比率')
+    parser.add_argument('--rare_cls_num', type=int, default=3, help='统计top n 模型最不自信的类别')
     # 训练配置
-    parser.add_argument('--num_rounds', type=int, default=5)
-    parser.add_argument('--epochs_per_round', type=int, default=5)
+    parser.add_argument('--num_rounds', type=int, default=5, help='自训练目标最大轮数（训练时使用了早停设计）')
+    parser.add_argument('--epochs_per_round', type=int, default=5, help='每次自训练跑多少epoch')
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-3, help='初始学习率（训练使用cosine annealing）')
 
     args = parser.parse_args()
 
