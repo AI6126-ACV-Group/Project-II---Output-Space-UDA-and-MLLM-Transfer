@@ -48,6 +48,9 @@ class TargetUnlabeledDataset(datasets.ImageFolder):
 
 
 class PseudoLabeledDataset(Dataset):
+    """
+    伪标签数据生成过程
+    """
     def __init__(self, samples, transform=None):
         self.samples = samples
         self.transform = transform
@@ -73,6 +76,9 @@ class PseudoLabeledDataset(Dataset):
         return img, label
 
 class SourceDatasetWrapper(Dataset):
+    """
+    非标转标过程，给int转统一的tensor
+    """
     def __init__(self, dataset, num_classes):
         self.dataset = dataset
         self.num_classes = num_classes
@@ -174,7 +180,7 @@ def get_model_predictions(model, loader, device, args):
     conf_dict = {i: [] for i in range(args.num_classes)}
     pred_cls_num = np.zeros(args.num_classes)
     with torch.no_grad():
-        for imgs, _, paths in loader:
+        for imgs, _, paths in loader: #这里目标域的target被隐藏，不会被使用
             imgs = imgs.to(device)
             probs = F.softmax(model(imgs), dim=1)
             max_probs, preds = torch.max(probs, dim=1)
@@ -217,6 +223,9 @@ def get_model_predictions(model, loader, device, args):
 
 
 def select_sample(all_probs, all_paths, current_thresholds, args):
+    """
+    生成目标域被选出的 图片 和 假标签 (all_paths[i], target_label)
+    """
     selected_samples = []
     num_classes = all_probs.size(1)
     lambdas = torch.from_numpy(current_thresholds).float()
@@ -236,6 +245,7 @@ def select_sample(all_probs, all_paths, current_thresholds, args):
                 target_label = torch.zeros(num_classes)
                 target_label[hard_label.item()] = 1.0
             selected_samples.append((all_paths[i], target_label))
+
     return selected_samples
 
 
@@ -470,6 +480,7 @@ def main(args):
         print(f"Round {r}: Selected {len(selected_samples)} target samples.")
         # 构建混合数据集进行再训练
         tgt_pseudo_ds = PseudoLabeledDataset(selected_samples, transform=transform_train)
+
         combined_loader = DataLoader(
             torch.utils.data.ConcatDataset([full_src_ds, tgt_pseudo_ds]),
             batch_size=args.batch_size,

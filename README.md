@@ -3,7 +3,7 @@
 ## Basic Info
 - 代码经过以下测试环境测试 Python==3.10 Pytorch==2.8 
 - codebase: https://github.com/yzou2/CRST (actually doesn't help much)
-- 当使用Resnet-50作为backbones时，batch=32, 224*224分辨率，在office-31数据集上显存消耗大概4G
+- 当使用Resnet-50作为backbones时，batch=32, 224*224分辨率，在office-31数据集上显存消耗大概5G
 
 ## Getting Started
 ### Prepare your dataset
@@ -56,7 +56,7 @@ CBST 并没有丢弃正则化，而是通过将正则化系数 $k$ “参数化�
 
 ```shell
 #训练示例
-python python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
+python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
 ```
 
 #### CRST 
@@ -86,7 +86,7 @@ $$L_{total} = L_{CE}(\mathbf{p}(\mathbf{x}_t), \hat{\mathbf{y}}_{t(\alpha)}) + \
 
 ```shell
 #训练示例 (运行时请修改 alpha beta gamma delta 我全上0.1只是为了检查报错)
-   python ST.py --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --alpha 0.1 --beta 0.1 --gamma 0.1 --delta 0.1 --save_dir ./checkpoints/amazon_to_webcam_CRST_mixed
+python ST.py --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --alpha 0.1 --beta 0.1 --gamma 0.1 --delta 0.1 --save_dir ./checkpoints/amazon_to_webcam_CRST_mixed
 ```
 
 ### Self training part Warning
