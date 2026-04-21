@@ -90,7 +90,7 @@ $$L_{total} = L_{CE}(\mathbf{p}(\mathbf{x}_t), \hat{\mathbf{y}}_{t(\alpha)}) + \
 ```
 
 ### Self training part Warning
-代码没法直接用官方，因为公开的代码是做 img seg 任务，目前的代码大部分是参考官方过程手搓的，关键部分我都有参考论文并在代码中注释，但不保证正确, 请Review
+代码没法直接用官方，因为公开的代码是做 img seg 任务，目前的代码大部分是参考官方过程搓的，关键部分我都有参考论文并在代码中注释，但不保证正确, 请Review
 
 目前我只测试过kc_value='conf'，'prob' 模式 未测试
 
