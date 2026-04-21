@@ -38,11 +38,11 @@ $$L(w, \hat{y}) = L_{source}(w) + L_{target}(w, \hat{y}) + L_{reg}(\hat{y})$$
 python ST.py --arch resnet50 --method ST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --save_dir ./checkpoints/amazon_to_webcam_ST
 ```
 #### CBST 
-- 源域损失 (Source Domain Loss)与标准自训练一致，使用带标签源域数据的交叉熵损失：
+- 源域损失 (Source Domain Loss)与标准自训练一致，使用带标签源域数据的交叉熵损失:
 $$L_{source} = - \sum_{s=1}^S \sum_{n=1}^N \left[ y_{s,n} \cdot \log(p_n(w; I_s)) \right]$$
-- 类平衡目标域损失 (Class-Balanced Target Loss)通过为每个类别 $c$ 引入独立的参数 $k_c$，实现类间平衡：
+- 类平衡目标域损失 (Class-Balanced Target Loss)通过为每个类别 $c$ 引入独立的参数 $k_c$，实现类间平衡:
 $$L_{target\_balanced} = - \sum_{t=1}^T \sum_{n=1}^N \sum_{c=1}^C \left[ \hat{y}(c)_{t,n} \cdot \log(p(c | w; I_t)) + k_c \cdot \hat{y}(c)_{t,n} \right]$$
-- 总体类平衡损失函数 (Overall Class-Balanced Loss)
+- 总体类平衡损失函数 (Overall Class-Balanced Loss):
 $$L_{CB}(w, \hat{y}) = L_{source}(w) + L_{target\_balanced}(w, \hat{y})$$
 CBST 并没有丢弃正则化，而是通过将正则化系数 $k$ “参数化”为与类别相关的 $k_c$，实现了类平衡选择。这种形式在数学表达上更直接地描述了伪标签 $\hat{y}$ 与预测概率 $p$ 之间的竞争关系
 
@@ -56,15 +56,15 @@ python python ST.py --method CBST --src_path ./original_datasets/office_31/amazo
 - 总体损失函数 (Combined Loss) CRST 将 CBST 的静态选择过程转化为了一个连续的正则化框架: 
 $$L_{CRST}(w, \hat{y}) = \underbrace{L_{CB}(w, \hat{y})}_{\text{CBST 基础损失}} + \underbrace{\mathcal{R}_{MR}(w)}_{\text{模型正则化扩展}}$$
 ##### 可选扩展 (标签正则)
-- `LRENT` (熵正则扩展) 在 CBST 中，伪标签 $\hat{y}$ 通常是硬标签（Hard Label）,CRST 可引入 LRENT 来实现标签软化：
+- `LRENT` (熵正则扩展) 在 CBST 中，伪标签 $\hat{y}$ 通常是硬标签（Hard Label）,CRST 可引入 LRENT 来实现标签软化:
 $$\hat{y}_{t}^{(i)} = \frac{\left( \frac{p(i|\mathbf{x}_t)}{\lambda_i} \right)^{\frac{1}{\alpha}}}{\sum_{k=1}^{K} \left( \frac{p(k|\mathbf{x}_t)}{\lambda_k} \right)^{\frac{1}{\alpha}}}$$
    扩展：通过 $\alpha$ 允许伪标签具有一定的概率分布，而非(1,0)
 ##### 可选扩展 (模型正则)
 - `MRKLD` (KL 散度扩展): 
 $$\mathcal{R}_{MRKLD} = -\sum_{k=1}^{K} \frac{1}{K} \log p(k|\mathbf{x}_t)$$
-- `MRENT` (熵正则扩展)：
+- `MRENT` (熵正则扩展):
 $$\mathcal{R}_{MRENT} = \sum_{k=1}^{K} p(k|\mathbf{x}_t) \log p(k|\mathbf{x}_t)$$
-- `MRL2` (L2 范数扩展)：
+- `MRL2` (L2 范数扩展):
 $$\mathcal{R}_{MRL2} = \sum_{k=1}^{K} p(k|\mathbf{x}_t)^2$$
 
 代码使用 alpha beta gamma delta 来控制各个正则化强度，原始论文使用了消融实验方法
