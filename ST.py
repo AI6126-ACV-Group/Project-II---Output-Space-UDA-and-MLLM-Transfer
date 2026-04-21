@@ -476,7 +476,7 @@ if __name__ == '__main__':
     parser.add_argument('--warmup_epochs', type=int, default=20, help='源域预训练轮数，如果没有源域模型输入，会重新训练')
     parser.add_argument('--lr_warm', type=float, default=0.0001, help='源域预训练初始学习率(cosine annealing)，如果没有源域模型输入，会重新训练')
     # 是否从断点继续训练
-    parser.add_argument('--resume', action='store_true', help='是否从 checkpoint 恢复训练')
+    parser.add_argument('--resume', action='store_true', help='是否从 checkpoint 恢复训练, 默认从文件夹中checkpoint.pth恢复训练')
     # ST模式设置
     parser.add_argument('--method', type=str, default='ST', choices=['ST', 'CBST', 'CRST'])
     parser.add_argument('--kc_value', type=str, default='conf', choices=['conf', 'prob'],help="kc_value 计算使用硬标签还是软标签")
@@ -506,3 +506,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     main(args)
+
+    #python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 5 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 5e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
