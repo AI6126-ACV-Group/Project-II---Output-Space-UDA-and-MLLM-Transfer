@@ -573,7 +573,7 @@ if __name__ == '__main__':
     parser.add_argument('--delta', type=float, default=0.0, help="MRL2 (Model Regularization - L2) 权重")
     # 数据与保存路径
     parser.add_argument('--src_path', type=str, default='./original_datasets/office_31/amazon',  help='源域数据路径')
-    parser.add_argument('--tgt_path', type=str, default='./original_datasets/office_31/webcam',  help='目标域无标签数据路径')
+    parser.add_argument('--tgt_path', type=str, default='./original_datasets/office_31/webcam',  help='目标域数据路径')
     parser.add_argument('--apply_aug', action='store_true', help='是否在训练时应用 RandomCrop 和 Flip')
     parser.add_argument('--save_dir', type=str, default='./ST_test')
     # ST超参数
