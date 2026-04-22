@@ -504,6 +504,10 @@ def main(args):
 
         for epoch in range(args.epochs_per_round):
             total_loss = 0
+            total_ce_loss = 0
+            total_mrkld_loss=0
+            total_mrent_loss = 0
+            total_mrl2_loss=0
             for imgs, labels in combined_loader:
                 imgs, labels = imgs.to(device), labels.to(device)
                 optimizer.zero_grad()
@@ -511,14 +515,19 @@ def main(args):
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
+                total_ce_loss += ce_loss.item()
+                total_mrkld_loss += mrkld_loss.item()
+                total_mrent_loss += mrent_loss.item()
+                total_mrl2_loss += mrl2_loss.item()
+
             scheduler.step()
             print(
                 f"Round {r} | Epoch {epoch} | LR: {optimizer.param_groups[0]['lr']:.6f} "
                 f"| Loss: {total_loss / len(combined_loader):.4f}"
-                f"| CE loss: {ce_loss / len(combined_loader):.4f} "
-                f"| mrkld loss: {mrkld_loss / len(combined_loader):.4f} "
-                f"| mrent loss: {mrent_loss / len(combined_loader):.4f} "
-                f"| mrl2 loss: {mrl2_loss / len(combined_loader):.4f}")
+                f"| CE loss: {total_ce_loss / len(combined_loader):.4f} "
+                f"| mrkld loss: {total_mrkld_loss / len(combined_loader):.4f} "
+                f"| mrent loss: {total_mrent_loss / len(combined_loader):.4f} "
+                f"| mrl2 loss: {total_mrl2_loss / len(combined_loader):.4f}")
 
         # 验证 (使用带有真标的 tgt_eval_loader)
         model.eval()
@@ -606,5 +615,5 @@ if __name__ == '__main__':
 
     # python ST.py --arch resnet50 --method ST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --save_dir ./checkpoints/amazon_to_webcam_ST
     # python ST.py --arch resnet50 --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --save_dir ./checkpoints/amazon_to_webcam_CBST
-    # python ST.py --arch resnet50 --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --alpha 0.02 --beta 0 --gamma 0 --delta 0 --save_dir ./checkpoints/amazon_to_webcam_CRST_LRENT
-    # python ST.py --arch resnet50 --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --alpha 0 --beta 0.02 --gamma 0 --delta 0 --save_dir ./checkpoints/amazon_to_webcam_CRST_MRKLD
+    # python ST.py --arch resnet50 --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --alpha 1e-3 --beta 0 --gamma 0 --delta 0 --save_dir ./checkpoints/amazon_to_webcam_CRST_LRENT
+    # python ST.py --arch resnet50 --method CRST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --alpha 0 --beta 1e-3 --gamma 0 --delta 0 --save_dir ./checkpoints/amazon_to_webcam_CRST_MRKLD
