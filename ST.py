@@ -258,46 +258,47 @@ def loss_function(logits, labels, args):
     """
     probs = F.softmax(logits, dim=1)
     log_probs = F.log_softmax(logits, dim=1)
-    num_classes = logits.size(1)
 
-    # 1. 基础交叉熵损失 (Standard Cross Entropy)
+    # 基础交叉熵损失 (已经是 Tensor)
     ce_loss = -(labels * log_probs).sum(dim=1).mean()
 
-    if args.method != 'CRST':
-        return  ce_loss
+    # 初始化正则项为 0 维 Tensor (这样它们依然是 Tensor 模式)
+    # 使用 .to(logits.device) 确保它们在同一张显卡上
+    mrkld_loss = torch.tensor(0.0).to(logits.device)
+    mrent_loss = torch.tensor(0.0).to(logits.device)
+    mrl2_loss = torch.tensor(0.0).to(logits.device)
 
-    mrkld_loss = 0.0
-    mrent_loss = 0.0
-    mrl2_loss = 0.0
+    # 只有 CRST 模式才计算具体的正则项
+    if args.method == 'CRST':
+        if args.beta > 0:
+            # MRKLD (Model Regularization via KL Divergence):
+            # - sum_{k=1}^K [ (1 / K) * log(p(k | x_t)) ] (其实就是负的对数概率均值)
+            # 物理意义: 最小化预测分布 p 与均匀分布 U(1/K) 之间的 KL 散度。
+            # 效果: 强制模型预测向均匀分布靠拢，这是 CRST 论文中最推荐的正则化方式，能有效保持类别多样性。
+            mrkld_loss = -log_probs.mean(dim=1).mean()
+        if args.gamma > 0:
+            # MRENT (Model Regularization via Entropy):
+            # sum_{k=1}^K [ p(k | x_t) * log(p(k | x_t)) ]
+            # 物理意义: 惩罚模型预测分布的负熵。
+            # 效果: 直接鼓励模型输出具有更高熵（更不确定）的预测，避免模型陷入单一类别的自信陷阱。
+            mrent_loss = (probs * log_probs).sum(dim=1).mean()
+        if args.delta > 0:
+            # MRL2 (Model Regularization via L2 Norm):
+            #  sum_{k=1}^K [ p(k | x_t)^2 ]
+            # 物理意义: 最小化预测概率向量的 L2 范数。
+            # 效果: 防止预测分布中出现极大的概率值（如 0.999），迫使概率分布更加平滑。
+            # 这里的 .mean() 会保持 Tensor 属性
+            mrl2_loss = torch.norm(probs, p=2, dim=1).mean()
 
-    # MRKLD (Model Regularization via KL Divergence):
-    # - sum_{k=1}^K [ (1 / K) * log(p(k | x_t)) ] (其实就是负的对数概率均值)
-    # 物理意义: 最小化预测分布 p 与均匀分布 U(1/K) 之间的 KL 散度。
-    # 效果: 强制模型预测向均匀分布靠拢，这是 CRST 论文中最推荐的正则化方式，能有效保持类别多样性。
-    if args.beta > 0:
-        mrkld_loss = -log_probs.mean(dim=1).mean()
-
-    # MRENT (Model Regularization via Entropy):
-    # sum_{k=1}^K [ p(k | x_t) * log(p(k | x_t)) ]
-    # 物理意义: 惩罚模型预测分布的负熵。
-    # 效果: 直接鼓励模型输出具有更高熵（更不确定）的预测，避免模型陷入单一类别的自信陷阱。
-    if args.gamma > 0:
-        mrent_loss = (probs * log_probs).sum(dim=1).mean()  # 惩罚低熵
-
-    # MRL2 (Model Regularization via L2 Norm):
-    #  sum_{k=1}^K [ p(k | x_t)^2 ]
-    # 物理意义: 最小化预测概率向量的 L2 范数。
-    # 效果: 防止预测分布中出现极大的概率值（如 0.999），迫使概率分布更加平滑。
-    if args.delta > 0:
-        mrl2_loss = torch.norm(probs, p=2, dim=1).mean()
-
-    # --- 最终损失加权整合 ---
+    # 2. 最终损失加权整合 (所有项都是 Tensor，相加结果也是 Tensor)
     total_loss = (ce_loss +
                   args.beta * mrkld_loss +
                   args.gamma * mrent_loss +
                   args.delta * mrl2_loss)
 
+    # 始终返回 5 个值，保持调用处解包的一致性
     return total_loss, ce_loss, mrkld_loss, mrent_loss, mrl2_loss
+
 
 def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, args, warmup_model_path):
     print(f"==> Starting Warm-up...")
