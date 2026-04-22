@@ -433,15 +433,6 @@ def main(args):
     st_patience = 3
     st_counter = 0
 
-    if args.resume and os.path.exists(checkpoint_path):
-        print(f"==> Resuming from checkpoint: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        start_round = checkpoint['round'] + 1
-        best_target_acc = checkpoint.get('best_target_acc', 0.0)
-        st_counter = checkpoint.get('st_counter', 0)
-        print(f"==> Resumed from Round {start_round}. Best Acc: {best_target_acc:.2f}%")
-
     # --- Source-only Warm-up ---
     if not (args.resume and os.path.exists(checkpoint_path)):
         if os.path.exists(warmup_model_path):
@@ -469,6 +460,25 @@ def main(args):
 
     # --- Self-Training Rounds ---
     current_thresholds = np.zeros(args.num_classes)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs_per_round * args.num_rounds, eta_min=0
+    )
+
+    if args.resume and os.path.exists(checkpoint_path):
+        print(f"==> Resuming from checkpoint: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path)
+        # 恢复模型权重
+        model.load_state_dict(checkpoint['model_state_dict'])
+        # 恢复优化器状态（包含 momentum, velocity 等）
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # 恢复调度器状态（包含当前步数 last_epoch）
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_round = checkpoint['round'] + 1
+        best_target_acc = checkpoint.get('best_target_acc', 0.0)
+        st_counter = checkpoint.get('st_counter', 0)
+        print(f"==> Resumed from Round {start_round}. Best Acc: {best_target_acc:.2f}%")
+
     for r in range(start_round, args.num_rounds):
         
         raw_probs, paths, conf_dict, pred_num = get_model_predictions(model, tgt_loader, device, args)
@@ -490,13 +500,7 @@ def main(args):
             #                      torch.stack([item[1] if isinstance(item[1], torch.Tensor) else torch.tensor(item[1]).long() for item in x]))
         )
 
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=args.epochs_per_round * len(combined_loader), eta_min=1e-6
-        )
-
         model.train()
-
         for epoch in range(args.epochs_per_round):
             total_loss = 0
             for imgs, labels in combined_loader:
@@ -505,10 +509,11 @@ def main(args):
                 loss = loss_function(model(imgs), labels, args)
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
                 total_loss += loss.item()
             print(
                 f"Round {r} | Epoch {epoch} | LR: {optimizer.param_groups[0]['lr']:.6f} | Loss: {total_loss / len(combined_loader):.4f}")
+
+        scheduler.step()
 
         # 验证 (使用带有真标的 tgt_eval_loader)
         model.eval()
@@ -537,6 +542,8 @@ def main(args):
         save_dict = {
             'round': r,
             'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),  # 必须保存
+            'scheduler_state_dict': scheduler.state_dict(),  # 必须保存
             'best_target_acc': best_target_acc,
             'st_counter': st_counter,
             'args': args
@@ -592,4 +599,4 @@ if __name__ == '__main__':
 
     main(args)
 
-    #python ST.py --method CBST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 20 --epochs_per_round 3 --init_portion 0.2 --portion_step 0.05 --max_portion 0.8 --lr 2e-4 --save_dir ./checkpoints/amazon_to_webcam_CBST
+    #python ST.py --arch resnet50 --method ST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 2e-5 --save_dir ./checkpoints/amazon_to_webcam_ST
