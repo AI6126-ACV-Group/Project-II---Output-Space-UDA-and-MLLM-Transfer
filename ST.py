@@ -430,7 +430,7 @@ def main(args):
 
     start_round = 0
     best_target_acc = 0.0
-    st_patience = 3
+    st_patience = 8
     st_counter = 0
 
     # --- Source-only Warm-up ---
@@ -601,4 +601,4 @@ if __name__ == '__main__':
 
     main(args)
 
-    #python ST.py --arch resnet50 --method ST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 2e-5 --save_dir ./checkpoints/amazon_to_webcam_ST
+    #python ST.py --arch resnet50 --method ST --src_path ./original_datasets/office_31/amazon --tgt_path ./original_datasets/office_31/webcam --apply_aug --num_rounds 50 --epochs_per_round 2 --init_portion 0.1 --portion_step 0.02 --max_portion 0.8 --lr 1e-5 --save_dir ./checkpoints/amazon_to_webcam_ST
