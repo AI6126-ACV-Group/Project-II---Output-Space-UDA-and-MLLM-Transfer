@@ -501,6 +501,7 @@ def main(args):
         )
 
         model.train()
+
         for epoch in range(args.epochs_per_round):
             total_loss = 0
             for imgs, labels in combined_loader:
@@ -510,10 +511,11 @@ def main(args):
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
+            scheduler.step()
             print(
                 f"Round {r} | Epoch {epoch} | LR: {optimizer.param_groups[0]['lr']:.6f} | Loss: {total_loss / len(combined_loader):.4f}")
 
-        scheduler.step()
+
 
         # 验证 (使用带有真标的 tgt_eval_loader)
         model.eval()
