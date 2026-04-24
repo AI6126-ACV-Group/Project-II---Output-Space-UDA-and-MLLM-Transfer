@@ -95,4 +95,7 @@ python ST.py --method CRST --src_path ./original_datasets/office_31/amazon --tgt
 目前我只测试过kc_value='conf'，'prob' 模式 未测试
 
 
+### Adapter part
 
+Not done yet, but U can try the early-build here
+[Adapter.py](Adapter.py)
