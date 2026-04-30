@@ -43,19 +43,19 @@ class TipAdapterF(nn.Module):
         self.alpha = args.init_alpha
 
     def forward(self, image):
-        # 1. 提取原始 CLIP 特征
+        # 提取原始 CLIP 特征
         clip_dtype = self.clip_model.visual.conv1.weight.dtype
         with torch.no_grad():
             image_features = self.clip_model.visual(image.type(clip_dtype)).float()
             image_features /= image_features.norm(dim=-1, keepdim=True)
-        # 2. CLIP 分支
+        #  CLIP 分支
         clip_logits = self.logit_scale * image_features @ self.text_features.t()
 
-        # 3. Tip-Adapter 分支 (使用可学习的 adapter 层计算 affinity)
+        # Tip-Adapter 分支 (使用可学习的 adapter 层计算 affinity)
         affinity = self.adapter(image_features)  # [Batch, N]
         cache_logits = ((-1) * (self.beta - self.beta * affinity)).exp() @ self.cache_values
 
-        # 4. 融合
+        # 4融合
         logits = clip_logits + self.alpha * cache_logits
         return logits
 
@@ -105,7 +105,6 @@ class CustomCLIP(nn.Module):
         else:
             fc_dim = 512
         self.adapter = Adapter(fc_dim, args.reduction).to(self.dtype)
-        # 1. 预计算并缓存文本特征，归一化
         with torch.no_grad():
             # 这里的 text_encoder 会处理好 bike_helmet -> bike helmet
             t_feat = self.text_encoder()
@@ -123,7 +122,6 @@ class CustomCLIP(nn.Module):
         # 残差增强
         x = self.adapter(image_features)
         image_features = self.ratio * x + (1 - self.ratio) * image_features
-        # 5. 融合后再次归一化（防止模长偏移）
         image_features = image_features / (image_features.norm(dim=-1, keepdim=True) + 1e-6)
         # 直接使用缓存的、预先归一化过的文本特征
         text_features = self.text_features_cache.type(self.dtype)
@@ -183,17 +181,15 @@ def evaluate_tip_adapter(model, loader, cache_keys, cache_values, device, beta=1
     with torch.no_grad():
         for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
-            # 1. 获取 CLIP 原始特征并归一化
             clip_dtype = model.image_encoder.conv1.weight.dtype
             image_features = model.image_encoder(images.type(clip_dtype)).float()
             image_features /= image_features.norm(dim=-1, keepdim=True)
-            # 2. Zero-shot CLIP 分支
+
             clip_logits = scale * image_features @ text_features.t()
-            # 3. Tip-Cache 分支 (核心计算)
             affinity = image_features @ cache_keys.float()  # [Batch, N]
-            # 高斯核变换
+
             cache_logits = ((-1) * (beta - beta * affinity)).exp() @ cache_values.float()
-            # 4. 融合
+
             tip_logits = clip_logits + alpha * cache_logits
             correct += (tip_logits.argmax(1) == labels).sum().item()
             total += labels.size(0)
@@ -206,9 +202,9 @@ def train (args, model, train_loader, val_loader, optimizer, criterion, device, 
     """
     best_acc = 0.0
     counter = 0
-    # 针对每个阶段重新初始化调度器
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    # 记录该阶段的历史
+
     stage_history = {"loss": [], "acc": []}
     for epoch in range(args.epochs):
         model.train()
@@ -228,18 +224,17 @@ def train (args, model, train_loader, val_loader, optimizer, criterion, device, 
             pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
 
         scheduler.step()
-        # 验证当前 epoch 性能
+
         current_acc = evaluate(model, val_loader, device)
         avg_loss = epoch_loss / len(train_loader)
         stage_history["loss"].append(avg_loss)
         stage_history["acc"].append(current_acc)
 
         logger.info(f"[{stage_name}] Epoch {epoch + 1} | Avg Loss: {avg_loss:.4f} | Test Acc: {current_acc:.2f}%")
-        # --- 模型保存与早停逻辑 ---
         if current_acc > best_acc:
             best_acc = current_acc
             counter = 0
-            # 保存该阶段表现最好的权重
+
             save_path = os.path.join(output_dir, f"best_{stage_name.lower()}.pth")
             torch.save(model.adapter.state_dict(), save_path)
             logger.info(f">>> New Best Acc in {stage_name}: {best_acc:.2f}%! Saved to {save_path}")
@@ -300,7 +295,7 @@ def main(args):
     output_dir = os.path.join(args.save_dir, exp_name)
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
-    # 日志初始化 (全局唯一)
+
     log_path = os.path.join(output_dir, "pipeline.log")
     logging.basicConfig(
         level=logging.INFO,
@@ -313,7 +308,7 @@ def main(args):
     for key, value in args_dict.items():
         logger.info(f"{key:20s}: {value}")
     logger.info("=" * 51 + "\n")
-    # 1. 加载 CLIP 与 数据 (只需要加载一次)
+
     clip_model, preprocess = clip.load(args.backbone, device=device)
     source_dataset = datasets.ImageFolder(root=args.source_path, transform=preprocess)
     target_dataset = datasets.ImageFolder(root=args.target_path, transform=preprocess)
@@ -349,35 +344,34 @@ def main(args):
     text_features = temp_clip.text_features_cache.clone()
     results_summary = {}
 
-    # 实验 1: B-Domain Zero-shot
+    # B-Domain Zero-shot
     logger.info("\n>>> EXPERIMENT 1: B-Domain Zero-shot")
     model, _, _ = reset_experiment()
     acc = evaluate(model, target_loader_full, device)
     results_summary['Zero-shot'] = acc
     logger.info(f"Zero-shot Acc: {acc:.2f}%")
 
-    # 实验 2: B-Domain Few-shot
+    #  B-Domain Few-shot
     logger.info("\n>>> EXPERIMENT 2: B-Domain Few-shot")
     model, optimizer, criterion = reset_experiment()
     acc = train(args, model, target_few_shot_loader, target_loader_full,
                 optimizer, criterion, device, logger, output_dir, "B-FewShot")
     results_summary['Few-shot'] = acc
 
-    # 实验 3: A-to-B Transfer (A训练后直接用于B)
+    # A-to-B Transfer (A训练后直接用于B)
     logger.info("\n>>> EXPERIMENT 3: A-to-B Transfer")
     model, optimizer, criterion = reset_experiment()
     acc = train(args, model, source_loader_full, target_loader_full,
                 optimizer, criterion, device, logger, output_dir, "A-to-B-Transfer")
     results_summary['Transfer'] = acc
 
-    # 实验 4: A-Pretrain + B-Few-shot-FineTune
+    # A-Pretrain + B-Few-shot-FineTune
     logger.info("\n>>> EXPERIMENT 4: A-Pretrain + B-FineTune")
-    # 注意：这里不需要手动 reset，我们要保留 A 的权重
+    # 注意：这里不需要手动 reset，要保留 A 的权重
     model, optimizer, criterion = reset_experiment()
-    # Stage 1: A-Domain Pretrain
+    # A-Domain Pretrain
     train(args, model, source_loader_full, target_loader_full,
           optimizer, criterion, device, logger, output_dir, "Pretrain-Stage1")
-    # 加载 Stage 1 最好权重进行微调
     model.adapter.load_state_dict(torch.load(os.path.join(output_dir, "best_pretrain-stage1.pth")))
     optimizer = torch.optim.AdamW(model.adapter.parameters(), lr=args.lr * 0.1, weight_decay=args.weight_decay)
     # Stage 2: B-Domain Fine-tune
@@ -385,7 +379,7 @@ def main(args):
                 optimizer, criterion, device, logger, output_dir, "FineTune-Stage2")
     results_summary['A-Pretrain-B-FineTune'] = acc
 
-    # 实验 5: Tip-Adapter (0-shot)
+    # Tip-Adapter
     logger.info("\n>>> EXPERIMENT 5: Tip-Adapter (Non-parametric)")
     # 使用 target_few_shot_loader 构建缓存
     args.augment_epoch = 10
@@ -399,7 +393,7 @@ def main(args):
     results_summary['Tip-Adapter'] = acc_tip
     logger.info(f"Tip-Adapter 0-shot Acc: {acc_tip:.2f}%")
 
-    # 实验 6: Tip-Adapter-F (Fine-tuning)
+    # Tip-Adapter-F
     logger.info("\n>>> EXPERIMENT 6: Tip-Adapter-F (Fine-tuning)")
     # 直接利用刚刚生成的 ckey, cval 进行微调
     acc_tip_f = run_tip_adapter_F_stage(args, clip_model, ckey, cval, text_features,
@@ -407,7 +401,6 @@ def main(args):
                                         device, logger, output_dir)
     results_summary['Tip-Adapter-F'] = acc_tip_f
 
-    # --- 最终汇总输出 ---
     logger.info("\n" + "=" * 40)
     logger.info("FINAL PIPELINE RESULTS SUMMARY")
     logger.info("=" * 40)
@@ -442,3 +435,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
+
+    # python  Adapter.py --source_path ./original_datasets/PACS/photo --target_path ./original_datasets/PACS/sketch --dataset PACS --save_dir checkpoints/photo_to_sketch_Adapter

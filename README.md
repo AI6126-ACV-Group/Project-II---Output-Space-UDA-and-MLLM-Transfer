@@ -2,7 +2,9 @@
 
 ## Basic Info
 - 代码经过以下测试环境测试 Python==3.10 Pytorch==2.8 
-- codebase: https://github.com/yzou2/CRST (actually doesn't help much)
+- codebase for ST: https://github.com/yzou2/CRST
+- codebase for CLIP Adapter: https://github.com/gaopengcuhk/CLIP-Adapter
+- codebase for TIP Adapter: https://github.com/gaopengcuhk/Tip-Adapter
 - 当使用Resnet-50作为backbones时，batch=32, 224*224分辨率，在office-31数据集上显存消耗大概5G
 
 ## Getting Started
@@ -92,10 +94,19 @@ python ST.py --method CRST --src_path ./original_datasets/office_31/amazon --tgt
 ### Self training part Warning
 代码没法直接用官方，因为公开的代码是做 img seg 任务，目前的代码大部分是参考官方过程搓的，关键部分我都有参考论文并在代码中注释，但不保证正确, 请Review
 
-目前我只测试过kc_value='conf'，'prob' 模式 未测试
+目前我只测试过kc_value='conf' (硬标签)，'prob'（软标签）模式 未测试
 
 
 ### Adapter part
 
-Not done yet, but U can try the early-build here
-[Adapter.py](Adapter.py)
+细节详见:
+[Adapter.py](Adapter.py), 这部分让我想起了做可控图像生成时的Adapter，是同一套冻结主体+塞个可训练层的思路
+
+```shell
+#训练示例
+python Adapter.py --source_path ./original_datasets/PACS/photo --target_path ./original_datasets/PACS/sketch --dataset PACS --save_dir checkpoints/photo_to_sketch_Adapter
+```
+
+### Adapter training part Warning
+
+官方代码中 Adaper 用的也是一个bottle-neck unit 但我不太清楚为什么官方在adapter最后层加了一个 Relu 这导致了所有输出都是正的，我把它注掉了保留了最后一个线性层，实验表明这样操作后adapter 的效果是更好的

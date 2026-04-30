@@ -345,6 +345,11 @@ def source_warmup(model, train_loader, src_val_loader, tgt_val_loader, device, a
               f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
               f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.2f}%")
         # 早停逻辑
+        if args.warmup_limit!= 0.0 and val_acc >= args.warmup_limit:
+            print(f"==> Target Validation Accuracy reached at epoch {epoch + 1}. Stopping warm-up.")
+            best_model_wts = model.state_dict().copy()
+            break
+
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             counter = 0
@@ -583,6 +588,7 @@ if __name__ == '__main__':
     parser.add_argument('--arch', type=str, default='resnet50',choices=['resnet18', 'resnet34', 'resnet50', 'resnet101'], help='选择网络baseline')
     parser.add_argument('--warmup_epochs', type=int, default=20, help='源域预训练轮数，如果没有源域模型输入，会重新训练')
     parser.add_argument('--lr_warm', type=float, default=0.0001, help='源域预训练初始学习率(cosine annealing)，如果没有源域模型输入，会重新训练')
+    parser.add_argument('--warmup_limit', type=float, default=0.0, help='源域预训练在eval集上的准确度上限，超过该上限时停止warmup(建议在domain gap过大时使用, 输入值范围为 0-100)')
     # 是否从断点继续训练
     parser.add_argument('--resume', action='store_true', help='是否从 checkpoint 恢复训练, 默认从文件夹中checkpoint.pth恢复训练')
     # ST模式设置
